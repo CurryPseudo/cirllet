@@ -101,6 +101,10 @@ face_to_dir = {
 	p.new(0, -1), 
 	p.new(0, 1)
 }
+--collider box
+box = {}
+box.pos = p.new()
+box.size = p.new(1, 1)
 --player
 player = {}
 player.face = 1
