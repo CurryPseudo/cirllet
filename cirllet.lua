@@ -5,15 +5,24 @@ player = {}
 player.update = function (self)
 	local sign = new_p()
 	if btn(0) then
-		sign.x = sign.x - 1
+		sign.x = -1
+		self.s.id = 1
+		self.s.flip.x = true
 	elseif btn(1) then
-		sign.x = sign.x + 1
+		sign.x = 1
+		self.s.id = 1
+		self.s.flip.x = false
 	elseif btn(2) then
-		sign.y = sign.y - 1
+		sign.y = -1
+		self.s.id = 3
 	elseif btn(3) then
-		sign.y = sign.y + 1
+		sign.y = 1
+		self.s.id = 2
 	end
-	self.p = self.p + sign
+	self.p = self.p + sign * self.speed
+	self.sign = sign
+
+
 end
 player.speed = 1
 --sprite
@@ -40,6 +49,19 @@ function new_p()
 			local new = new_p()
 			new.x = left.x + right.x
 			new.y = left.y + right.y
+			return new
+		end,
+		__mul = function(left, right)
+			local pos_or_scalar = function (i, p)
+				if type(p) == "table" then
+					return p[i]
+				else
+					return p
+				end
+			end
+			local new = new_p()
+			new.x = pos_or_scalar("x", left) * pos_or_scalar("x", right)
+			new.y = pos_or_scalar("y", left) * pos_or_scalar("y", right)
 			return new
 		end
 	}
