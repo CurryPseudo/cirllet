@@ -1,4 +1,9 @@
 --table
+function swap(a, b)
+	local t = a
+	a = b
+	b = t
+end
 function dump(value, call_indent)
 
   if not call_indent then 
@@ -141,6 +146,10 @@ objects = {
 		objects.concat_destroy(o, function(o_self)
 			destroy(o_self)
 		end)
+		return id
+	end,
+	remove = function(self, id)
+		self.list[id] = nil
 	end,
 	concat_destroy = function(o, destroy)
 		local last_destroy = o.destroy
@@ -219,17 +228,19 @@ box = {
 				if self.collision_list ~= nil then
 					box_pos = box_pos + dir * self.speed
 					local max = box_pos + self.box.size
-					for _, o in pairs(self.collision_list.list) do
-						if o.box ~= nil then
-							local o_box_pos = o:box_pos()
-							local o_max = o_box_pos + o.box.size
-							if box_pos.x < o_max.x and box_pos.y < o_max.y and 
-								o_box_pos.x < max.x and o_box_pos.y < max.y then
-								if self.on_collision ~= nil then
-									self:on_collision(o)
-								end
-								if o.box.block then
-									return
+					for _, l in pairs(self.collision_list) do
+						for _, o in pairs(l.list)do
+							if o.box ~= nil then
+								local o_box_pos = o:box_pos()
+								local o_max = o_box_pos + o.box.size
+								if box_pos.x < o_max.x and box_pos.y < o_max.y and 
+									o_box_pos.x < max.x and o_box_pos.y < max.y then
+									if self.on_collision ~= nil then
+										self:on_collision(o)
+									end
+									if o.box.block then
+										return
+									end
 								end
 							end
 						end
@@ -278,6 +289,7 @@ animation = {
 	end
 }
 --player
+parrying_players = objects.new()
 player = {
 	face = 2,
 	faces = {"right", "right", "up", "down"},
@@ -287,17 +299,13 @@ player = {
 			idle = {
 				update = function(state, self)
 					self:process_move()
-					local current_animation = self.animation:current_animation();
 					--trigger bullet
-					if btnp(4) then
-						local offset = (current_animation.bullet_pos - v.new(3.5, 0)) 
-							* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
-						local pos = self.pos + offset
-						bullet.new(self.face, pos)
+					if abtnp(4) then
+						self:fire_bullet()
 						self.fsm:change(self, "reload")
 						return
 					end
-					if btnp(5) then
+					if abtnp(5) then
 						self.fsm:change(self, "prepare_parry")
 					end
 				end
@@ -333,6 +341,9 @@ player = {
 				end
 			},
 			parry = {
+				on_parry_bullet = function(state, self)
+					state.parried_bullet = state.parried_bullet + 1
+				end,
 				play_animation = function(self)
 					self:fetch_face()
 					self.animation:change("parry_"..self:up_or_down())
@@ -340,24 +351,45 @@ player = {
 				enter = function(state, self)
 					self.animation.t = 0
 					state.play_animation(self)
+					state.parring_id = parrying_players:add(self)
+					state.parried_bullet = 0
 				end,
 				update = function(state, self)
 					self.animation:update(self)
 					state.play_animation(self)
 					if not btn(5) then
+						self.fsm.states.after_parry.parried_bullet = state.parried_bullet
 						self.fsm:change(self, "after_parry")
 					end
+				end,
+				exit = function(state, self)
+					parrying_players:remove(state.parring_id)
 				end
 			},
 			after_parry = {
+				bullet_step_time = 0.1,
+				bullet_step_time_left = 0,
+				parried_bullet = 0,
+				animation_finish = false,
 				enter = function(state, self)
 					self.animation.t = 0
+					state.bullet_step_time_left = 0
+					state.animation_finish = false
 					self.animation:change("after_parry_"..self:up_or_down(), function()
-						self.fsm:change(self, "reload")
+						state.animation_finish = true
 					end)
 				end,
 				update = function(state, self)
 					self.animation:update(self)
+					if state.bullet_step_time_left > 0 then
+						state.bullet_step_time_left = state.bullet_step_time_left - frame_time
+					elseif state.parried_bullet > 0 then
+						self:fire_bullet()
+						state.parried_bullet = state.parried_bullet - 1
+						state.bullet_step_time_left = state.bullet_step_time_left + state.bullet_step_time
+					elseif state.animation_finish then 
+						self.fsm:change(self, "reload")
+					end
 				end
 			}
 		},
@@ -391,32 +423,26 @@ player = {
 		r.animation.data = {
 			right = {
 				series = {1, 2, 3, 2, 1},
-				bullet_pos = v.new(8, 5),
 				loop = true
 			},
 			right_walk = {
 				series = {1, 2, 3, 2, 1},
-				bullet_pos = v.new(8, 5),
 				loop = true
 			},
 			up = {
 				series = {7, 8, 9, 8, 7},
-				bullet_pos = v.new(4, 2),
 				loop = true
 			},
 			up_walk = {
 				series = {7, 8, 9, 8, 7},
-				bullet_pos = v.new(4, 2),
 				loop = true
 			},
 			down = {
 				series = {4, 5, 6, 5, 4},
-				bullet_pos = v.new(5, 8),
 				loop = true
 			},
 			down_walk = {
 				series = {4, 5, 6, 5, 4},
-				bullet_pos = v.new(5, 8),
 				loop = true
 			},
 			prepare_parry_down = {
@@ -447,8 +473,23 @@ player = {
 			}
 		}
 		r.animation.name = "right"
-		r.collision_list = portals
+		r.collision_list = { portals }
 		os:add(r)
+	end,
+	fire_bullet = function(self)
+		local target_pos = {
+			v.new(8, 5),
+			v.new(8, 5),
+			v.new(4, 2),
+			v.new(5, 8)
+		}
+		local offset = (target_pos[self.face] - v.new(3.5, 0)) 
+			* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
+		local pos = self.pos + offset
+		bullet.new(self.face, pos)
+	end,
+	on_parry_bullet = function(self)
+		self.fsm.states.parry:on_parry_bullet(self)
 	end,
 	up_or_down = function(self)
 		local table = {"down", "down", "up", "down"}
@@ -564,6 +605,9 @@ bullet = {
 					v.new(3.5, 8),
 				}
 				self:set_pos(o.other.pos + target_pos[self.face])
+			elseif o.on_parry_bullet ~= nil then
+				o:on_parry_bullet()
+				self:destroy()
 			end
 		end
 	end,
@@ -578,7 +622,7 @@ bullet = {
 		box.add_to(r)
 		r.s.id = 10
 		r.box.size = v.new(3, 3)
-		r.collision_list = portals
+		r.collision_list = { portals, parrying_players }
 		os:add(r)
 		bullets:add_bullet(r)
 		return r
@@ -694,6 +738,12 @@ portal = {
 		return r
 	end,
 }
+--accurate btnp
+last_btn_cache = {false, false, false, false, false, false}
+current_btn_cache = {false, false, false, false, false, false}
+function abtnp(b)
+	return (not last_btn_cache[b + 1]) and current_btn_cache[b + 1]
+end
 function _init()
 	maps:init()
 end
@@ -707,6 +757,10 @@ function _draw()
 	end
 end
 function _update60()
+	last_btn_cache = clone(current_btn_cache)
+	for i = 0, 5 do
+		current_btn_cache[i + 1] = btn(i)
+	end
 	for _, o in pairs(os.list) do
 		if o.update ~=nil then
 			o:update()
