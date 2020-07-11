@@ -178,6 +178,15 @@ face_to_dir = {
 	v.new(0, 1)
 }
 --collider box
+tile_map = {
+	new = function()
+		local r = {}
+		for i = 0, 15 do
+			r[i] = {}
+		end
+		return r
+	end
+}
 box = {
 	offset = v.new(),
 	size = v.new(1, 1),
@@ -216,7 +225,8 @@ box = {
 				}
 				local box_pos = self:box_pos()
 				local from = box_pos + (self.box.size - v.new(1, 1)) * from[face]
-				local ps = line_pixels(from, line_dir[face], len[face])
+				--local ps = line_pixels(from, line_dir[face], len[face])
+				local ps = { from, from + line_dir[face] * (len[face] - 1)}
 				local p, s = block_move(ps, face, distance)
 				if p ~= nil then
 					return p, s
@@ -495,7 +505,6 @@ player = {
 			}
 		}
 		r.animation.name = "right"
-		r.collision_list = { portals, doors }
 		os:add(r)
 		players:add(r)
 	end,
@@ -591,7 +600,7 @@ bullets.size = 0
 do
 	local last_add = bullets.add
 	bullets.add_bullet = function(self, o)
-		if bullets.size >= 3 then
+		if bullets.size >= 5 then
 			for _, bullet in pairs(bullets.list) do
 				bullet:destroy()
 				break
@@ -653,7 +662,7 @@ bullet = {
 		box.add_to(r)
 		r.s.id = 10
 		r.box.size = v.new(3, 3)
-		r.collision_list = { portals, parrying_players, doors }
+		r.collision_list = { parrying_players }
 		os:add(r)
 		bullets:add_bullet(r)
 		return r
@@ -664,10 +673,15 @@ function block_move(ps, face, len)
 	for i = 1, len do
 		for _, p in pairs(ps) do
 			local target_p = p + face_to_dir[face] * len
-			local map_p = target_p / 8 + maps:current()
+			target_p = target_p / 8
+			local map_p = target_p + maps:current()
 			local s = mget(map_p.x, map_p.y) 
 			if fget(s, 0) then
 				return target_p, s
+			end
+			local o = maps.tile[flr(target_p.x)][flr(target_p.y)]
+			if o ~= nil then
+				return o
 			end
 		end
 	end
@@ -707,51 +721,62 @@ progress_bar = {
 --portal
 portals = objects.new()
 portal = {
-	new = function(pos)
-		local r = {}
-		r.pos = pos
-		s.add_to(r)
-		r.animation = animation.new()
-		r.animation.data = {
-			idle = {
-				series = {29, 30, 31, 43},
-				loop = true
-			}
+	new = function(begin_s)
+		local generator = {}
+		maps.dynamic[begin_s] = {
+			o = generator,
+			into_tile = true
 		}
-		r.animation.name = "idle"
-		r.update = function(self)
-			self.animation:update(self)
-		end
-		box.add_to(r)
-		r.box.size = v.new(8, 8)
-		r.box.block = true
-		for _, portal in pairs(portals.list) do
-			r.other = portal
-			portal.other = r
-			break
-		end
-		r.valid_face = function(self, face)
-			local next = {
-				3, 4, 2, 1
+		generator.new = function(pos)
+			local r = {}
+			r.begin_s = begin_s
+			r.pos = pos
+			s.add_to(r)
+			r.animation = animation.new()
+			r.animation.data = {
+				idle = {
+					series = {begin_s, begin_s + 1, begin_s + 2, begin_s + 3},
+					loop = true
+				}
 			}
-			local current_face = face
-			local first = true
-			while true do
-				if current_face == face and not first then
-					return
-				end
-				first = false
-				local p = self:check_collision(current_face, 1)
-				if p ~= nil then
-					current_face = next[current_face]
-				else
-					return current_face
+			r.animation.name = "idle"
+			r.update = function(self)
+				self.animation:update(self)
+			end
+			box.add_to(r)
+			r.box.size = v.new(8, 8)
+			r.box.block = true
+			for _, portal in pairs(portals.list) do
+				if portal.begin_s == r.begin_s then
+					r.other = portal
+					portal.other = r
+					break
 				end
 			end
+			r.valid_face = function(self, face)
+				local next = {
+					3, 4, 2, 1
+				}
+				local current_face = face
+				local first = true
+				while true do
+					if current_face == face and not first then
+						return
+					end
+					first = false
+					local p = self:check_collision(current_face, 1)
+					if p ~= nil then
+						current_face = next[current_face]
+					else
+						return current_face
+					end
+				end
+			end
+			os:add(r)
+			portals:add(r)
+			return r
 		end
-		os:add(r)
-		portals:add(r)
-		return r
+		return generator
 	end,
 }
 --door
@@ -759,6 +784,10 @@ doors = objects.new()
 door = {
 	new = function(strength, begin_s)
 		local generator = {}
+		maps.dynamic[begin_s] = {
+			o = generator,
+			into_tile = true
+		}
 		generator.new = function(pos)
 			local r = {}
 			r.reopen_time = 3
@@ -836,9 +865,6 @@ door = {
 		return generator
 	end,
 }
-door_green = door.new(1, 33)
-door_yellow = door.new(1.5, 36)
-door_red = door.new(2, 39)
 --map
 maps = {
 	list = {
@@ -855,6 +881,7 @@ maps = {
 	end,
 	init = function(self)
 		local current = self:current();
+		self.tile = tile_map.new()
 		local map = {
 			m_pos = current,
 			draw = function(self)
@@ -865,20 +892,27 @@ maps = {
 			for j = 0, 15 do
 				local pos = v.new(i, j) + current
 				local s = mget(pos.x, pos.y)
-				if maps.dynamic[s] ~= nil then
-					maps.dynamic[s].new(v.new(i * 8, j * 8))
+				local dynamic = maps.dynamic[s]
+				if dynamic ~= nil then
+					local o = dynamic.o.new(v.new(i * 8, j * 8))
 					mset(pos.x, pos.y, 0)
+					if dynamic.into_tile ~= nil then
+						self.tile[i][j] = o
+					end
 				end
 			end
 		end
 		os:add(map)
 	end
 }
-maps.dynamic[1] = player
-maps.dynamic[29] = portal
-maps.dynamic[33] = door_green
-maps.dynamic[36] = door_yellow
-maps.dynamic[39] = door_red
+maps.dynamic[1] = {o = player}
+
+door_green = door.new(1, 33)
+door_yellow = door.new(1.5, 36)
+door_red = door.new(2, 39)
+portal_blue = portal.new(49)
+portal_yellow = portal.new(53)
+portal_red = portal.new(57)
 --accurate btnp
 last_btn_cache = {false, false, false, false, false, false}
 current_btn_cache = {false, false, false, false, false, false}
