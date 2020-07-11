@@ -160,6 +160,7 @@ do
 	setmetatable(v, mt)
 end
 --all objects
+objects_list = {}
 objects = {
 	list = {},
 	len = 1,
@@ -190,7 +191,15 @@ objects = {
 		end
 	end,
 	new = function()
-		return clone(objects)
+		local r = clone(objects)
+		add(objects_list, r)
+		return r
+	end,
+	clear_all = function()
+		for _, os in pairs(objects_list) do
+			os.list = {}
+			os.len = 1
+		end
 	end
 }
 os = objects.new()
@@ -535,6 +544,13 @@ player = {
 		r.animation.name = "right"
 		os:add(r)
 		players:add(r)
+	end,
+	on_collision = function(self, p, s)
+		if s ~= nil then
+			if s == 29 then
+				maps:next()
+			end
+		end
 	end,
 	fire_bullet = function(self)
 		local target_pos = {
@@ -900,6 +916,7 @@ door = {
 maps = {
 	list = {
 		v.new(0, 0),
+		v.new(16, 0),
 	},
 	dynamic = {
 	},
@@ -909,8 +926,10 @@ maps = {
 	end,
 	next = function(self)
 		self.current_index = self.current_index + 1
+		self:init()
 	end,
 	init = function(self)
+		objects.clear_all()
 		local current = self:current();
 		self.tile = tile_map.new()
 		local map = {
