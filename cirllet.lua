@@ -161,7 +161,7 @@ os = objects.new()
 --constant
 frame_rate = 60
 frame_time = 1 / frame_rate
-animation_rate = 60
+animation_rate = 0.1
 face_to_dir = {
 	v.new(-1, 0), 
 	v.new(1, 0), 
@@ -252,15 +252,25 @@ animation = {
 	current_animation = function(animation)
 		return animation.data[animation.name]
 	end,
-	change = function(animation, name)
+	change = function(animation, name, after_finish)
 		animation.name = name
+		animation.after_finish = after_finish
 	end,
 	update = function(animation, self)
 		local current_animation = animation:current_animation()
-		self.s.id = current_animation.series[flr(animation.t / animation_rate * #current_animation.series) + 1]
-		animation.t = animation.t + 1
-		if animation.t >= animation_rate then
-			animation.t = 0
+		local rate = current_animation.rate or 1
+		self.s.id = current_animation.series[flr(animation.t) + 1]
+		animation.t = animation.t + animation_rate * rate
+		if animation.t >= #current_animation.series  then
+			if current_animation.loop then
+				animation.t = animation.t % #current_animation.series
+			else
+				animation.t = #current_animation.series - 1
+				if animation.after_finish ~= nil then
+					animation.after_finish()
+					animation.after_finish = nil
+				end
+			end
 		end
 	end,
 	new = function()
@@ -269,7 +279,7 @@ animation = {
 }
 --player
 player = {
-	face = 1,
+	face = 2,
 	faces = {"right", "right", "up", "down"},
 	flip_x = false,
 	fsm = {
@@ -285,6 +295,10 @@ player = {
 						local pos = self.pos + offset
 						bullet.new(self.face, pos)
 						self.fsm:change(self, "reload")
+						return
+					end
+					if btnp(5) then
+						self.fsm:change(self, "prepare_parry")
 					end
 				end
 			},
@@ -305,6 +319,45 @@ player = {
 					else
 						self.fsm:change(self, "idle")
 					end
+				end
+			},
+			prepare_parry = {
+				enter = function(state, self)
+					self.animation.t = 0
+					self.animation:change("prepare_parry_"..self:up_or_down(), function()
+						self.fsm:change(self, "parry")
+					end)
+				end,
+				update = function(state, self)
+					self.animation:update(self)
+				end
+			},
+			parry = {
+				play_animation = function(self)
+					self:fetch_face()
+					self.animation:change("parry_"..self:up_or_down())
+				end,
+				enter = function(state, self)
+					self.animation.t = 0
+					state.play_animation(self)
+				end,
+				update = function(state, self)
+					self.animation:update(self)
+					state.play_animation(self)
+					if not btn(5) then
+						self.fsm:change(self, "after_parry")
+					end
+				end
+			},
+			after_parry = {
+				enter = function(state, self)
+					self.animation.t = 0
+					self.animation:change("after_parry_"..self:up_or_down(), function()
+						self.fsm:change(self, "reload")
+					end)
+				end,
+				update = function(state, self)
+					self.animation:update(self)
 				end
 			}
 		},
@@ -338,32 +391,68 @@ player = {
 		r.animation.data = {
 			right = {
 				series = {1, 2, 3, 2, 1},
-				bullet_pos = v.new(8, 5)
+				bullet_pos = v.new(8, 5),
+				loop = true
 			},
 			right_walk = {
 				series = {1, 2, 3, 2, 1},
-				bullet_pos = v.new(8, 5)
+				bullet_pos = v.new(8, 5),
+				loop = true
 			},
 			up = {
 				series = {7, 8, 9, 8, 7},
-				bullet_pos = v.new(4, 2)
+				bullet_pos = v.new(4, 2),
+				loop = true
 			},
 			up_walk = {
 				series = {7, 8, 9, 8, 7},
-				bullet_pos = v.new(4, 2)
+				bullet_pos = v.new(4, 2),
+				loop = true
 			},
 			down = {
 				series = {4, 5, 6, 5, 4},
-				bullet_pos = v.new(5, 8)
+				bullet_pos = v.new(5, 8),
+				loop = true
 			},
 			down_walk = {
 				series = {4, 5, 6, 5, 4},
-				bullet_pos = v.new(5, 8)
+				bullet_pos = v.new(5, 8),
+				loop = true
 			},
+			prepare_parry_down = {
+				series = {17, 18, 19},
+				rate = 2
+			},
+			parry_down = {
+				series = {20, 19},
+				rate = 2,
+				loop = true
+			},
+			after_parry_down = {
+				series = {19, 18, 17},
+				rate = 4,
+			},
+			prepare_parry_up = {
+				series = {21, 22, 23},
+				rate = 2
+			},
+			parry_up = {
+				series = {24, 23},
+				rate = 2,
+				loop = true
+			},
+			after_parry_up = {
+				series = {23, 22, 21},
+				rate = 4,
+			}
 		}
 		r.animation.name = "right"
 		r.collision_list = portals
 		os:add(r)
+	end,
+	up_or_down = function(self)
+		local table = {"down", "down", "up", "down"}
+		return table[self.face]
 	end,
 	face_dir = function (self)
 		local face = {
@@ -377,35 +466,34 @@ player = {
 	flip_x_sign = function (self)
 		return self.flip_x and -1 or 1
 	end,
-	process_move = function(self)
-		local animation = self.animation
-		local current = animation.current
-		--face to
-		local face = self.face
-		local change_face = false
+	fetch_face = function(self)
 		self.move = true
 		if btn(0) then
-			face = 1
+			self.face = 1
 			self.flip_x = true
 		elseif btn(1) then
-			face = 2
+			self.face = 2
 			self.flip_x = false
 		elseif btn(2) then
-			face = 3
+			self.face = 3
 		elseif btn(3) then
-			face = 4
+			self.face = 4
 		else
 			self.move = false
 		end
+		self.s.flip.x = self.flip_x
+	end,
+	process_move = function(self)
+		local animation = self.animation
+		local current = animation.current
+		self:fetch_face()
 		local next_name = ""
 		if self.move then
-			next_name = self.faces[face].."_walk";
+			next_name = self.faces[self.face].."_walk";
 		else 
-			next_name = self.faces[face];
+			next_name = self.faces[self.face];
 		end
 		self.animation:change(next_name)
-		self.face = face
-		self.s.flip.x = self.flip_x
 
 		--move
 		--self.pos = self.pos + self.sign * self.speed
@@ -416,7 +504,9 @@ player = {
 	end,
 	update = function (self)
 		local current_state = self.fsm:current()
-		current_state:update(self)
+		if current_state.update ~= nil then
+			current_state:update(self)
+		end
 	end,
 	speed = 1
 }
@@ -589,6 +679,7 @@ portal = {
 		r.animation.data = {
 			idle = {
 				series = {29, 30, 31, 43},
+				loop = true
 			}
 		}
 		r.animation.name = "idle"
