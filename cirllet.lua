@@ -1,4 +1,39 @@
 --table
+function dump(value, call_indent)
+
+  if not call_indent then 
+    call_indent = ""
+  end
+
+  local indent = call_indent .. "  "
+
+  local output = ""
+
+  if type(value) == "table" then
+      output = output .. "{"
+      local first = true
+      for inner_key, inner_value in pairs ( value ) do
+        if not first then 
+          output = output .. ", "
+        else
+          first = false
+        end
+        output = output .. "\n" .. indent
+        output = output  .. inner_key .. " = " .. dump ( inner_value, indent ) 
+      end
+      output = output ..  "\n" .. call_indent .. "}"
+
+  elseif type (value) == "userdata" then
+    output = "userdata"
+  elseif type (value)  == "function" then
+    output = "function"
+  elseif type(value) == "boolean" then
+	output = value and "true" or "false"
+  else
+    output =  value
+  end
+  return output 
+end
 function unpack (arr, i, j)
   local n = {}
   local k = 0
@@ -93,18 +128,36 @@ do
 	setmetatable(v, mt)
 end
 --all objects
-os = {
+objects = {
 	list = {},
 	len = 1,
 	add = function(self, o)
 		self.list[self.len] = o
-		o.id = self.len
+		local id = self.len
 		self.len = self.len + 1
-		o.destroy = function(o_self)
-			self.list[o_self.id] = nil
+		local destroy = function(o_self)
+			self.list[id] = nil
 		end
+		objects.concat_destroy(o, function(o_self)
+			destroy(o_self)
+		end)
+	end,
+	concat_destroy = function(o, destroy)
+		local last_destroy = o.destroy
+		if last_destroy ~= nil then
+			o.destroy = function(o_self)
+				last_destroy(o_self)
+				destroy(o_self)
+			end
+		else
+			o.destroy = destroy
+		end
+	end,
+	new = function()
+		return clone(objects)
 	end
 }
+os = objects.new()
 --constant
 frame_rate = 60
 frame_time = 1 / frame_rate
@@ -119,6 +172,13 @@ face_to_dir = {
 box = {
 	offset = v.new(),
 	size = v.new(1, 1),
+	f = {false, false, false, false, false, false, false, false},
+	get_f = function(self, i)
+		return self.f[i + 1]
+	end,
+	set_f = function(self, i, b)
+		self.f[i + 1] = b
+	end,
 	add_to = function(o)
 		o.box = clone(box)
 		local last_draw = o.draw
@@ -133,7 +193,7 @@ box = {
 					v.new(0, 0),
 					v.new(1, 1),
 				}
-				local dir = {
+				local line_dir = {
 					v.new(0, -1),
 					v.new(0, 1),
 					v.new(1, 0),
@@ -145,23 +205,66 @@ box = {
 					self.box.size.x,
 					self.box.size.x
 				}
-				local from = self:box_pos() + self.box.size * from[self.face]
-				local ps = line_pixels(from, dir[self.face], len[self.face])
+				local box_pos = self:box_pos()
+				local from = box_pos + (self.box.size - v.new(1, 1)) * from[self.face]
+				local ps = line_pixels(from, line_dir[self.face], len[self.face])
 				local p, s = block_move(ps, self.face, self.speed)
-				if p == nil then
-					self.pos = self.pos + face_to_dir[self.face] * self.speed
-				else
+				if p ~= nil then
 					if self.on_collision ~= nil then
 						self:on_collision(p, s)
 					end
+					return
 				end
+				local dir = face_to_dir[self.face]
+				if self.collision_list ~= nil then
+					box_pos = box_pos + dir * self.speed
+					local max = box_pos + self.box.size
+					for _, o in pairs(self.collision_list.list) do
+						if o.box ~= nil then
+							local o_box_pos = o:box_pos()
+							local o_max = o_box_pos + o.box.size
+							if box_pos.x < o_max.x and box_pos.y < o_max.y and 
+								o_box_pos.x < max.x and o_box_pos.y < max.y then
+								if self.on_collision ~= nil then
+									self:on_collision(o)
+								end
+								if o.box.block then
+									return
+								end
+							end
+						end
+					end
+				end
+				self.pos = self.pos + dir * self.speed
 			end
 		end
 		--o.draw = function(self)
 		--	last_draw(self)
 		--	local pos = self:box_pos()
-		--	rect(pos.x, pos.y, pos.x + self.box.size.x, pos.y + self.box.size.y)
+		--	rect(pos.x, pos.y, pos.x + self.box.size.x - 1, pos.y + self.box.size.y - 1, 8)
 		--end
+	end
+}
+--animation
+--
+animation = {
+	t = 0,
+	current_animation = function(animation)
+		return animation.data[animation.name]
+	end,
+	change = function(animation, name)
+		animation.name = name
+	end,
+	update = function(animation, self)
+		local current_animation = animation:current_animation()
+		self.s.id = current_animation.series[flr(animation.t / animation_rate * #current_animation.series) + 1]
+		animation.t = animation.t + 1
+		if animation.t >= animation_rate then
+			animation.t = 0
+		end
+	end,
+	new = function()
+		return clone(animation)
 	end
 }
 --player
@@ -169,42 +272,12 @@ player = {
 	face = 1,
 	faces = {"right", "right", "up", "down"},
 	flip_x = false,
-	animation = {
-		right = {
-			series = {1, 2, 3, 2, 1},
-			bullet_pos = v.new(8, 5)
-		},
-		right_walk = {
-			series = {1, 2, 3, 2, 1},
-			bullet_pos = v.new(8, 5)
-		},
-		up = {
-			series = {7, 8, 9, 8, 7},
-			bullet_pos = v.new(4, 2)
-		},
-		up_walk = {
-			series = {7, 8, 9, 8, 7},
-			bullet_pos = v.new(4, 2)
-		},
-		down = {
-			series = {4, 5, 6, 5, 4},
-			bullet_pos = v.new(5, 8)
-		},
-		down_walk = {
-			series = {4, 5, 6, 5, 4},
-			bullet_pos = v.new(5, 8)
-		},
-		current = {
-			name = "right",
-			t = 0
-		}
-	},
 	fsm = {
 		states = {
 			idle = {
 				update = function(state, self)
 					self:process_move()
-					local current_animation = self:current_animation();
+					local current_animation = self.animation:current_animation();
 					--trigger bullet
 					if btnp(4) then
 						local offset = (current_animation.bullet_pos - v.new(3.5, 0)) 
@@ -260,7 +333,36 @@ player = {
 		r.pos = pos
 		box.add_to(r)
 		r.box.offset = v.new(1, 0)
-		r.box.size = v.new(5, 7)
+		r.box.size = v.new(6, 8)
+		r.animation = animation.new()
+		r.animation.data = {
+			right = {
+				series = {1, 2, 3, 2, 1},
+				bullet_pos = v.new(8, 5)
+			},
+			right_walk = {
+				series = {1, 2, 3, 2, 1},
+				bullet_pos = v.new(8, 5)
+			},
+			up = {
+				series = {7, 8, 9, 8, 7},
+				bullet_pos = v.new(4, 2)
+			},
+			up_walk = {
+				series = {7, 8, 9, 8, 7},
+				bullet_pos = v.new(4, 2)
+			},
+			down = {
+				series = {4, 5, 6, 5, 4},
+				bullet_pos = v.new(5, 8)
+			},
+			down_walk = {
+				series = {4, 5, 6, 5, 4},
+				bullet_pos = v.new(5, 8)
+			},
+		}
+		r.animation.name = "right"
+		r.collision_list = portals
 		os:add(r)
 	end,
 	face_dir = function (self)
@@ -301,13 +403,7 @@ player = {
 		else 
 			next_name = self.faces[face];
 		end
-		if next_name ~= current.name then
-			current.name = next_name
-			if self.group[next_name] ~= current.name then
-				current.t = 0
-			end
-
-		end
+		self.animation:change(next_name)
 		self.face = face
 		self.s.flip.x = self.flip_x
 
@@ -316,15 +412,7 @@ player = {
 		self:box_block_move()
 
 		--animation
-		local current_animation = self:current_animation();
-		self.s.id = current_animation.series[flr(current.t / animation_rate * #current_animation.series) + 1]
-		current.t = current.t + 1
-		if current.t >= animation_rate then
-			current.t = 0
-		end
-	end,
-	current_animation = function(self)
-		return self.animation[self.animation.current.name]
+		self.animation:update(self)
 	end,
 	update = function (self)
 		local current_state = self.fsm:current()
@@ -344,33 +432,77 @@ do
 	insert_animation_group({"right_walk", "up_walk", "down_walk"})
 end
 --bullet
+bullets = objects.new()
+bullets.size = 0
+do
+	local last_add = bullets.add
+	bullets.add_bullet = function(self, o)
+		if bullets.size >= 3 then
+			for _, bullet in pairs(bullets.list) do
+				bullet:destroy()
+				break
+			end
+		end
+		bullets:add(o)
+		objects.concat_destroy(o, function(o_self)
+			bullets.size = bullets.size - 1
+		end)
+		bullets.size = bullets.size + 1
+	end
+end
 bullet = {
 	speed = 1,
 	move = true,
 	update = function(self)
 		self:box_block_move()
 	end,
-	on_collision = function(self)
-		self:destroy()
+	on_collision = function(self, p, s)
+		if p.box == nil then
+			if fget(s, 1) then
+				local next = {2, 1, 4, 3}
+				self.face = next[self.face]
+			else
+				self:destroy()
+			end
+		else
+			local o = p
+			if o.other ~= nil then --portal
+				local target_pos = {
+					v.new(-1, 3.5),
+					v.new(8, 3.5),
+					v.new(3.5, -1),
+					v.new(3.5, 8),
+				}
+				self:set_pos(o.other.pos + target_pos[self.face])
+			end
+		end
+	end,
+	set_pos = function(self, pos)
+		self.pos = pos - v.new(1, 1)
+	end,
+	new = function(face, pos)
+		local r = clone(bullet)
+		r:set_pos(pos)
+		r.face = face
+		s.add_to(r)
+		box.add_to(r)
+		r.s.id = 10
+		r.box.size = v.new(3, 3)
+		r.collision_list = portals
+		os:add(r)
+		bullets:add_bullet(r)
+		return r
 	end
 }
-function bullet.new(face, pos)
-	local r = clone(bullet)
-	r.pos = pos - v.new(1, 1)
-	r.face = face
-	s.add_to(r)
-	box.add_to(r)
-	r.s.id = 10
-	r.box.size = v.new(3, 3)
-	os:add(r)
-	return r
-end
 --map
 maps = {
 	list = {
 		{
 			m_pos = v.new(0, 0),
-			player_pos = v.new(8, 8)
+			player_pos = v.new(8, 8),
+			portals = {
+				{v.new(4, 5), v.new(6, 7)}
+			}
 		}
 	},
 	current_index = 1,
@@ -389,6 +521,9 @@ maps = {
 				map(self.m_pos.x, self.m_pos.y, 0, 0, 16, 16)
 			end
 		}
+		for _, pair in pairs(current.portals) do
+			portal.new_pair(unpack(pair))
+		end
 		os:add(map)
 	end
 }
@@ -435,6 +570,38 @@ progress_bar = {
 		end
 		os:add(r)
 	end
+}
+--portal
+portals = objects.new()
+portal = {
+	new_pair = function(tile_pos_1, tile_pos_2)
+		local left = portal.new(tile_pos_1)
+		local right = portal.new(tile_pos_2)
+		left.other = right
+		right.other = left
+		return left, right
+	end,
+	new = function(tile_pos)
+		local r = {}
+		r.pos = tile_pos * 8
+		s.add_to(r)
+		r.animation = animation.new()
+		r.animation.data = {
+			idle = {
+				series = {29, 30, 31, 43},
+			}
+		}
+		r.animation.name = "idle"
+		r.update = function(self)
+			self.animation:update(self)
+		end
+		box.add_to(r)
+		r.box.size = v.new(8, 8)
+		r.box.block = true
+		os:add(r)
+		portals:add(r)
+		return r
+	end,
 }
 function _init()
 	maps:init()
