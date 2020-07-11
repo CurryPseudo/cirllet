@@ -194,6 +194,27 @@ box = {
 		o.box_pos = function(self)
 			return self.pos + self.box.offset
 		end
+		o.check_collision = function(self, offset)
+			if self.collision_list ~= nil then
+				local box_pos = self:box_pos()
+				if offset ~= nil then
+					box_pos = box_pos + offset
+				end
+				local max = box_pos + self.box.size
+				for _, l in pairs(self.collision_list) do
+					for _, o in pairs(l.list)do
+						if o.box ~= nil then
+							local o_box_pos = o:box_pos()
+							local o_max = o_box_pos + o.box.size
+							if box_pos.x < o_max.x and box_pos.y < o_max.y and 
+								o_box_pos.x < max.x and o_box_pos.y < max.y then
+								return o
+							end
+						end
+					end
+				end
+			end
+		end
 		o.box_block_move = function(self)
 			if self.move then
 				local from = {
@@ -225,25 +246,13 @@ box = {
 					return
 				end
 				local dir = face_to_dir[self.face]
-				if self.collision_list ~= nil then
-					box_pos = box_pos + dir * self.speed
-					local max = box_pos + self.box.size
-					for _, l in pairs(self.collision_list) do
-						for _, o in pairs(l.list)do
-							if o.box ~= nil then
-								local o_box_pos = o:box_pos()
-								local o_max = o_box_pos + o.box.size
-								if box_pos.x < o_max.x and box_pos.y < o_max.y and 
-									o_box_pos.x < max.x and o_box_pos.y < max.y then
-									if self.on_collision ~= nil then
-										self:on_collision(o)
-									end
-									if o.box.block then
-										return
-									end
-								end
-							end
-						end
+				local o = self:check_collision(dir * self.speed)
+				if o ~= nil then
+					if self.on_collision ~= nil then
+						self:on_collision(o)
+					end
+					if o.box.block then
+						return
 					end
 				end
 				self.pos = self.pos + dir * self.speed
@@ -270,7 +279,7 @@ animation = {
 	update = function(animation, self)
 		local current_animation = animation:current_animation()
 		local rate = current_animation.rate or 1
-		self.s.id = current_animation.series[flr(animation.t) + 1]
+		self.s.id = current_animation.series[flr(animation.t) % #current_animation.series + 1]
 		animation.t = animation.t + animation_rate * rate
 		if animation.t >= #current_animation.series  then
 			if current_animation.loop then
@@ -290,6 +299,7 @@ animation = {
 }
 --player
 parrying_players = objects.new()
+players = objects.new()
 player = {
 	face = 2,
 	faces = {"right", "right", "up", "down"},
@@ -336,7 +346,9 @@ player = {
 					end
 				end,
 				exit = function(state, self)
-					state.progress_bar:destroy()
+					if state.progress_bar ~= nil then
+						state.progress_bar:destroy()
+					end
 				end
 			},
 			prepare_parry = {
@@ -398,6 +410,7 @@ player = {
 						state.parried_bullet = state.parried_bullet - 1
 						state.bullet_step_time_left = state.bullet_step_time_left + state.bullet_step_time
 					elseif state.animation_finish then 
+						self.reload_time_left = self.reload_time
 						self.fsm:change(self, "reload")
 					end
 				end
@@ -421,6 +434,7 @@ player = {
 	},
 	group = {},
 	pos = v.new(),
+	--player new
 	new = function(pos)
 		local r = clone(player)
 		s.add_to(r)
@@ -457,7 +471,7 @@ player = {
 			},
 			prepare_parry_down = {
 				series = {17, 18, 19},
-				rate = 4
+				rate = 2
 			},
 			parry_down = {
 				series = {20, 19},
@@ -470,7 +484,7 @@ player = {
 			},
 			prepare_parry_up = {
 				series = {21, 22, 23},
-				rate = 4
+				rate = 2
 			},
 			parry_up = {
 				series = {24, 23},
@@ -483,8 +497,9 @@ player = {
 			}
 		}
 		r.animation.name = "right"
-		r.collision_list = { portals }
+		r.collision_list = { portals, doors }
 		os:add(r)
+		players:add(r)
 	end,
 	fire_bullet = function(self)
 		local target_pos = {
@@ -618,6 +633,9 @@ bullet = {
 			elseif o.on_parry_bullet ~= nil then
 				o:on_parry_bullet()
 				self:destroy()
+			elseif o.hit_by_bullet ~= nil then
+				o:hit_by_bullet()
+				self:destroy()
 			end
 		end
 	end,
@@ -632,43 +650,10 @@ bullet = {
 		box.add_to(r)
 		r.s.id = 10
 		r.box.size = v.new(3, 3)
-		r.collision_list = { portals, parrying_players }
+		r.collision_list = { portals, parrying_players, doors }
 		os:add(r)
 		bullets:add_bullet(r)
 		return r
-	end
-}
---map
-maps = {
-	list = {
-		{
-			m_pos = v.new(0, 0),
-			player_pos = v.new(8, 8),
-			portals = {
-				{v.new(4, 5), v.new(6, 7)}
-			}
-		}
-	},
-	current_index = 1,
-	current = function(self)
-		return self.list[self.current_index]
-	end,
-	next = function(self)
-		self.current_index = self.current_index + 1
-	end,
-	init = function(self)
-		local current = self:current();
-		player.new(clone(current.player_pos))
-		local map = {
-			m_pos = current.m_pos,
-			draw = function(self)
-				map(self.m_pos.x, self.m_pos.y, 0, 0, 16, 16)
-			end
-		}
-		for _, pair in pairs(current.portals) do
-			portal.new_pair(unpack(pair))
-		end
-		os:add(map)
 	end
 }
 --block move
@@ -676,7 +661,7 @@ function block_move(ps, face, len)
 	for i = 1, len do
 		for _, p in pairs(ps) do
 			local target_p = p + face_to_dir[face] * len
-			local map_p = target_p / 8 + maps:current().m_pos
+			local map_p = target_p / 8 + maps:current()
 			local s = mget(map_p.x, map_p.y) 
 			if fget(s, 0) then
 				return target_p, s
@@ -701,7 +686,7 @@ progress_bar = {
 		r.time_left = time_left or time
 		r.time = time
 		r.len = 10
-		r.c = 11
+		r.c = 8
 		r.update = function(self)
 			self.time_left = self.time_left - frame_time
 		end
@@ -719,16 +704,9 @@ progress_bar = {
 --portal
 portals = objects.new()
 portal = {
-	new_pair = function(tile_pos_1, tile_pos_2)
-		local left = portal.new(tile_pos_1)
-		local right = portal.new(tile_pos_2)
-		left.other = right
-		right.other = left
-		return left, right
-	end,
-	new = function(tile_pos)
+	new = function(pos)
 		local r = {}
-		r.pos = tile_pos * 8
+		r.pos = pos
 		s.add_to(r)
 		r.animation = animation.new()
 		r.animation.data = {
@@ -744,11 +722,141 @@ portal = {
 		box.add_to(r)
 		r.box.size = v.new(8, 8)
 		r.box.block = true
+		for _, portal in pairs(portals.list) do
+			r.other = portal
+			portal.other = r
+			break
+		end
 		os:add(r)
 		portals:add(r)
 		return r
 	end,
 }
+--door
+doors = objects.new()
+door = {
+	new = function(strength, begin_s)
+		local generator = {}
+		generator.new = function(pos)
+			local r = {}
+			r.reopen_time = 3
+			r.pos = pos
+			s.add_to(r)
+			r.s.id = begin_s
+			r.animation = animation.new()
+			r.enable_animation = false
+			r.strength_left = strength
+			r.animation.data = {
+				opened = {
+					series = {16},
+				},
+				close = {
+					series = {begin_s + 2, begin_s + 1},
+					rate = 2
+				}
+			}
+			local strength_to_id = function(strength_left)
+				local t = 1 - strength_left / strength
+				return 3 * sqrt(t) + begin_s
+			end
+			local open_time = 0.5
+			r.update = function(self)
+				if self.open_time_left ~= nil then
+					if self.open_time_left > 0 then
+						self.s.id = strength_to_id(self.open_time_left / open_time)
+						self.open_time_left = self.open_time_left - frame_time
+					else 
+						self.open_time_left = nil
+						self.enable_animation = true
+						self.animation.t = 0
+						doors:remove(self.door_id)
+						self.animation:change("opened")
+						r.reopen_time_left = r.reopen_time
+					end
+				elseif self.enable_animation then
+					self.animation:update(self)
+				else
+					self.s.id = strength_to_id(self.strength_left)
+					self.strength_left = self.strength_left + frame_time * 0.5
+					if self.strength_left > strength then
+						self.strength_left = strength
+					end
+				end
+				if self.reopen_time_left ~= nil then
+					if self.reopen_time_left > 0 then
+						self.reopen_time_left = self.reopen_time_left - frame_time
+					else
+						if self:check_collision() == nil then
+							self.door_id = doors:add(self)
+							self.animation:change("close", function()
+								self.enable_animation = false
+							end)
+							self.reopen_time_left = nil
+							self.strength_left = strength
+						end
+					end
+				end
+			end
+			r.hit_by_bullet = function(self)
+				self.strength_left = self.strength_left - 1
+				if self.strength_left <= 0 then
+					self.open_time_left = (self.strength_left + 1) / strength * open_time
+				end
+			end
+			box.add_to(r)
+			r.box.size = v.new(8, 8)
+			r.box.block = true
+			r.collision_list = { players }
+			os:add(r)
+			r.door_id = doors:add(r)
+			return r
+		end
+		return generator
+	end,
+}
+door_green = door.new(1, 33)
+door_yellow = door.new(1.5, 36)
+door_red = door.new(2, 39)
+--map
+maps = {
+	list = {
+		v.new(0, 0),
+	},
+	dynamic = {
+	},
+	current_index = 1,
+	current = function(self)
+		return self.list[self.current_index]
+	end,
+	next = function(self)
+		self.current_index = self.current_index + 1
+	end,
+	init = function(self)
+		local current = self:current();
+		local map = {
+			m_pos = current,
+			draw = function(self)
+				map(self.m_pos.x, self.m_pos.y, 0, 0, 16, 16)
+			end
+		}
+		for i = 0, 15 do
+			for j = 0, 15 do
+				local pos = v.new(i, j) + current
+				local s = mget(pos.x, pos.y)
+				if maps.dynamic[s] ~= nil then
+					maps.dynamic[s].new(v.new(i * 8, j * 8))
+					mset(pos.x, pos.y, 0)
+				end
+			end
+		end
+		os:add(map)
+	end
+}
+maps.dynamic[1] = player
+maps.dynamic[29] = portal
+maps.dynamic[33] = door_green
+maps.dynamic[36] = door_yellow
+maps.dynamic[39] = door_red
 --accurate btnp
 last_btn_cache = {false, false, false, false, false, false}
 current_btn_cache = {false, false, false, false, false, false}
@@ -760,7 +868,7 @@ function _init()
 end
 
 function _draw()
-	cls(0)
+	cls(6)
 	for _, o in pairs(os.list) do
 		if o.draw ~= nil then
 			o:draw()
