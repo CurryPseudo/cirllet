@@ -109,6 +109,8 @@ os = {
 	end
 }
 --constant
+frame_rate = 60
+frame_time = 1 / frame_rate
 animation_rate = 60
 face_to_dir = {
 	v.new(-1, 0), 
@@ -200,6 +202,58 @@ player = {
 			t = 0
 		}
 	},
+	fsm = {
+		states = {
+			idle = {
+				update = function(state, self)
+					self:process_move()
+					local current_animation = self:current_animation();
+					--trigger bullet
+					if btnp(4) then
+						local offset = (current_animation.bullet_pos - v.new(3.5, 0)) 
+							* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
+						local pos = self.pos + offset
+						bullet.new(self.face, pos)
+						self.fsm:change(self, "reload")
+					end
+				end
+			},
+			reload = {
+				reload_time = 2,
+				reload_time_left = 0,
+				enter = function(state, self)
+					local pos_f = function()
+						return self.pos
+					end
+					progress_bar.new(pos_f, v.new(-1, -2), state.reload_time)
+					state.reload_time_left = state.reload_time
+				end,
+				update = function(state, self)
+					self:process_move()
+					if state.reload_time_left > 0 then
+						state.reload_time_left = state.reload_time_left - frame_time
+					else
+						self.fsm:change(self, "idle")
+					end
+				end
+			}
+		},
+		current_name = "idle",
+		current = function(fsm)
+			return fsm.states[fsm.current_name]
+		end,
+		change = function(fsm, self, state_name)
+			local next = fsm.states[state_name]
+			local current = fsm:current()
+			if current.exit ~= nil then
+				current:exit(self)
+			end
+			if next.enter ~= nil then
+				next:enter(self)
+			end
+			fsm.current_name = state_name
+		end
+	},
 	group = {},
 	pos = v.new(),
 	new = function(pos)
@@ -224,7 +278,7 @@ player = {
 	flip_x_sign = function (self)
 		return self.flip_x and -1 or 1
 	end,
-	update = function (self)
+	process_move = function(self)
 		local animation = self.animation
 		local current = animation.current
 		--face to
@@ -265,20 +319,19 @@ player = {
 		self:box_block_move()
 
 		--animation
-		local current_animation = animation[current.name];
+		local current_animation = self:current_animation();
 		self.s.id = current_animation.series[flr(current.t / animation_rate * #current_animation.series) + 1]
 		current.t = current.t + 1
 		if current.t >= animation_rate then
 			current.t = 0
 		end
-
-		--trigger bullet
-		if btnp(4) then
-			local offset = (current_animation.bullet_pos - v.new(3.5, 0)) 
-				* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
-			local pos = self.pos + offset
-			bullet.new(self.face, pos)
-		end
+	end,
+	current_animation = function(self)
+		return self.animation[self.animation.current.name]
+	end,
+	update = function (self)
+		local current_state = self.fsm:current()
+		current_state:update(self)
 	end,
 	speed = 1
 }
@@ -363,7 +416,29 @@ function line_pixels(from, dir, len)
 	end
 	return r
 end
-
+--progress_bar
+progress_bar = {
+	new = function(follow_pos_f, offset, time)
+		local r = {}
+		r.follow_pos_f = follow_pos_f
+		r.offset = offset
+		r.time_left = time
+		r.time = time
+		r.len = 10
+		r.c = 11
+		r.update = function(self)
+			self.time_left = self.time_left - frame_time
+		end
+		r.draw = function(self)
+			local len = self.len * self.time_left / self.time
+			for i = 0, len - 1 do
+				local pos = self.follow_pos_f() + self.offset
+				pset(pos.x + i, pos.y, self.c)
+			end
+		end
+		os:add(r)
+	end
+}
 function _init()
 	maps:init()
 end
