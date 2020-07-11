@@ -294,6 +294,8 @@ player = {
 	face = 2,
 	faces = {"right", "right", "up", "down"},
 	flip_x = false,
+	reload_time = 2,
+	reload_time_left = 0,
 	fsm = {
 		states = {
 			idle = {
@@ -302,6 +304,7 @@ player = {
 					--trigger bullet
 					if abtnp(4) then
 						self:fire_bullet()
+						self.reload_time_left = self.reload_time
 						self.fsm:change(self, "reload")
 						return
 					end
@@ -311,22 +314,29 @@ player = {
 				end
 			},
 			reload = {
-				reload_time = 2,
-				reload_time_left = 0,
 				enter = function(state, self)
+					if self.reload_time_left <= 0 then
+						self.fsm:change(self, "idle")
+						return
+					end
 					local pos_f = function()
 						return self.pos
 					end
-					progress_bar.new(pos_f, v.new(-1, -2), state.reload_time)
-					state.reload_time_left = state.reload_time
+					state.progress_bar = progress_bar.new(pos_f, v.new(-1, -2), self.reload_time, self.reload_time_left)
 				end,
 				update = function(state, self)
 					self:process_move()
-					if state.reload_time_left > 0 then
-						state.reload_time_left = state.reload_time_left - frame_time
+					if self.reload_time_left > 0 then
+						self.reload_time_left = self.reload_time_left - frame_time
 					else
 						self.fsm:change(self, "idle")
 					end
+					if abtnp(5) then
+						self.fsm:change(self, "prepare_parry")
+					end
+				end,
+				exit = function(state, self)
+					state.progress_bar:destroy()
 				end
 			},
 			prepare_parry = {
@@ -447,7 +457,7 @@ player = {
 			},
 			prepare_parry_down = {
 				series = {17, 18, 19},
-				rate = 2
+				rate = 4
 			},
 			parry_down = {
 				series = {20, 19},
@@ -460,7 +470,7 @@ player = {
 			},
 			prepare_parry_up = {
 				series = {21, 22, 23},
-				rate = 2
+				rate = 4
 			},
 			parry_up = {
 				series = {24, 23},
@@ -684,11 +694,11 @@ function line_pixels(from, dir, len)
 end
 --progress_bar
 progress_bar = {
-	new = function(follow_pos_f, offset, time)
+	new = function(follow_pos_f, offset, time, time_left)
 		local r = {}
 		r.follow_pos_f = follow_pos_f
 		r.offset = offset
-		r.time_left = time
+		r.time_left = time_left or time
 		r.time = time
 		r.len = 10
 		r.c = 11
@@ -703,6 +713,7 @@ progress_bar = {
 			end
 		end
 		os:add(r)
+		return r
 	end
 }
 --portal
