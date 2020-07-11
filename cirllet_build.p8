@@ -210,6 +210,7 @@ os = objects.new()
 frame_rate = 60
 frame_time = 1 / frame_rate
 animation_rate = 0.1
+max_bullet_count = 5
 face_to_dir = {
 	v.new(-1, 0), 
 	v.new(1, 0), 
@@ -438,6 +439,11 @@ player = {
 					state.play_animation(self)
 					state.parring_id = parrying_players:add(self)
 					state.parried_bullet = 0
+					state.counter = bullet_counter.new(function()
+						return self.pos
+					end, v.new(2, -4), function()
+						return state.parried_bullet
+					end)
 				end,
 				update = function(state, self)
 					self.animation:update(self)
@@ -449,6 +455,7 @@ player = {
 				end,
 				exit = function(state, self)
 					parrying_players:remove(state.parring_id)
+					state.counter:destroy()
 				end
 			},
 			after_parry = {
@@ -662,7 +669,7 @@ bullets.size = 0
 do
 	local last_add = bullets.add
 	bullets.add_bullet = function(self, o)
-		if bullets.size >= 5 then
+		if bullets.size >= max_bullet_count then
 			for _, bullet in pairs(bullets.list) do
 				bullet:destroy()
 				break
@@ -784,6 +791,49 @@ progress_bar = {
 			end
 		end
 		os:add(r)
+		return r
+	end
+}
+--bullet counter
+bullet_counter = {
+	new = function(follow_pos_f, offset, bullet_count_f)
+		local r = {}
+		r.follow_pos_f = follow_pos_f
+		r.offset = offset
+		r.bullet_count_f = bullet_count_f
+		r.bullets = {}
+		r.last_count = 0
+		r.space = 4
+		for i = 1, max_bullet_count do
+			local bullet = {}
+			s.add_to(bullet)
+			bullet.s.id = 10
+			bullet.depth = 100
+			add(r.bullets, bullet)
+		end
+		r.update = function(self)
+			local this_count = self.bullet_count_f()
+			for i = self.last_count + 1, this_count do
+				os:add(self.bullets[i])
+			end
+			for i = this_count + 1, self.last_count do
+				self.bullets[i]:destroy()
+				self.bullets[i].destroy = nil
+			end
+			for i = 0, this_count - 1 do
+				local follow_pos = self.follow_pos_f() + self.offset
+				local x = (i - (this_count - 1) / 2) * self.space
+				self.bullets[i + 1].pos = v.new(x, 0) + follow_pos
+			end
+			self.last_count = this_count
+		end
+		os:add(r)
+		objects.concat_destroy(r, function(self)
+			printh("fuck")
+			for i = 1, r.last_count do
+				self.bullets[i]:destroy()
+			end
+		end)
 		return r
 	end
 }
@@ -941,7 +991,7 @@ door = {
 --map
 maps = {
 	list = {
-		v.new(0, 0),
+		v.new(32, 0),
 		v.new(16, 0),
 		v.new(32, 0),
 	},
