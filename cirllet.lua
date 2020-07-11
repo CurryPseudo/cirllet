@@ -220,6 +220,20 @@ tile_map = {
 		for i = 0, 15 do
 			r[i] = {}
 		end
+		r.get_tile = function(p)
+			return r[flr(p.x)][flr(p.y)]
+		end
+		r.get = function(p)
+			p = p / 8
+			return r.get_tile(p)
+		end
+		r.set_tile = function(p, o)
+			r[flr(p.x)][flr(p.y)] = o
+		end
+		r.set = function(p, o)
+			p = p / 8
+			r.set_tile(p, o)
+		end
 		return r
 	end
 }
@@ -263,7 +277,7 @@ box = {
 				local from = box_pos + (self.box.size - v.new(1, 1)) * from[face]
 				--local ps = line_pixels(from, line_dir[face], len[face])
 				local ps = { from, from + line_dir[face] * (len[face] - 1)}
-				local p, s = block_move(ps, face, distance)
+				local p, s = block_move(ps, face, distance, self.block_flags)
 				if p ~= nil then
 					return p, s
 				end
@@ -345,6 +359,7 @@ animation = {
 parrying_players = objects.new()
 players = objects.new()
 player = {
+	block_flags = {0},
 	depth = 1,
 	face = 2,
 	faces = {"right", "right", "up", "down"},
@@ -658,6 +673,7 @@ do
 	end
 end
 bullet = {
+	block_flags = {2},
 	depth = 2,
 	speed = 1,
 	move = true,
@@ -714,17 +730,21 @@ bullet = {
 	end
 }
 --block move
-function block_move(ps, face, len)
+function block_move(ps, face, len, block_flags)
 	for i = 1, len do
 		for _, p in pairs(ps) do
 			local target_p = p + face_to_dir[face] * len
 			target_p = target_p / 8
 			local map_p = target_p + maps:current()
 			local s = mget(map_p.x, map_p.y) 
-			if fget(s, 0) then
-				return target_p, s
+			if block_flags ~= nil then
+				for _, f in pairs(block_flags) do
+					if fget(s, f) then
+						return target_p, s
+					end
+				end
 			end
-			local o = maps.tile[flr(target_p.x)][flr(target_p.y)]
+			local o = maps.tile.get_tile(target_p)
 			if o ~= nil then
 				return o
 			end
@@ -743,6 +763,7 @@ end
 progress_bar = {
 	new = function(follow_pos_f, offset, time, time_left)
 		local r = {}
+		r.depth = 100
 		r.follow_pos_f = follow_pos_f
 		r.offset = offset
 		r.time_left = time_left or time
@@ -837,7 +858,7 @@ door = {
 		generator.new = function(pos)
 			local r = {}
 			r.depth = 1
-			r.reopen_time = 3
+			r.reopen_time = 2
 			r.pos = pos
 			s.add_to(r)
 			r.s.id = begin_s
@@ -868,6 +889,7 @@ door = {
 						self.enable_animation = true
 						self.animation.t = 0
 						doors:remove(self.door_id)
+						maps.tile.set(self.pos, nil)
 						self.animation:change("opened")
 						r.reopen_time_left = r.reopen_time
 					end
@@ -885,6 +907,7 @@ door = {
 						self.reopen_time_left = self.reopen_time_left - frame_time
 					else
 						if self:check_collision() == nil then
+							maps.tile.set(self.pos, self)
 							self.door_id = doors:add(self)
 							self.animation:change("close", function()
 								self.enable_animation = false
@@ -917,6 +940,7 @@ maps = {
 	list = {
 		v.new(0, 0),
 		v.new(16, 0),
+		v.new(32, 0),
 	},
 	dynamic = {
 	},
