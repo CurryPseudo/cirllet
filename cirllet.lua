@@ -277,10 +277,20 @@ box = {
 				local box_pos = self:box_pos()
 				local from = box_pos + (self.box.size - v.new(1, 1)) * from[face]
 				--local ps = line_pixels(from, line_dir[face], len[face])
-				local ps = { from, from + line_dir[face] * (len[face] - 1)}
-				local p, s = block_move(ps, face, distance, self.block_flags)
-				if p ~= nil then
-					return p, s
+				local to = from + line_dir[face] * (len[face] - 1)
+				local p_from, s_from = block_move(from, face, distance, self.block_flags)
+				local p_to, s_to = block_move(to, face, distance, self.block_flags)
+				if s_from and not s_to then
+					return line_dir[face], s_from
+				end
+				if not s_from and s_to then
+					return line_dir[face] * -1, s_to
+				end
+				if s_from and s_to then
+					return v.new(0, 0), s_from
+				end
+				if p_from or p_to then
+					return p_from or p_to
 				end
 			end
 			if self.collision_list ~= nil then
@@ -310,7 +320,10 @@ box = {
 					if self.on_collision ~= nil then
 						self:on_collision(p, s)
 					end
-					if p.box == nil or p.box.block then
+					if p.box == nil then
+						self.pos = self.pos + p
+						return
+					elseif p.box.block then
 						return
 					end
 				end
@@ -759,27 +772,24 @@ bullet = {
 	end
 }
 --block move
-function block_move(ps, face, len, block_flags)
+function block_move(p, face, len, block_flags)
 	for i = 1, len do
-		for _, p in pairs(ps) do
-			local target_p = p + face_to_dir[face] * len
-			target_p = target_p / 8
-			local map_p = target_p + maps:current()
-			local s = mget(map_p.x, map_p.y) 
-			if block_flags ~= nil then
-				for _, f in pairs(block_flags) do
-					if fget(s, f) then
-						return target_p, s
-					end
+		local target_p = p + face_to_dir[face] * len
+		target_p = target_p / 8
+		local map_p = target_p + maps:current()
+		local s = mget(map_p.x, map_p.y) 
+		if block_flags ~= nil then
+			for _, f in pairs(block_flags) do
+				if fget(s, f) then
+					return target_p, s
 				end
 			end
-			local o = maps.tile.get_tile(target_p)
-			if o ~= nil then
-				return o
-			end
+		end
+		local o = maps.tile.get_tile(target_p)
+		if o ~= nil then
+			return o
 		end
 	end
-	return
 end
 function line_pixels(from, dir, len)
 	local r = {}
