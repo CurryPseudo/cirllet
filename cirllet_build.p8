@@ -98,8 +98,14 @@ end
 --all objects
 os = {
 	list = {},
+	len = 1,
 	add = function(self, o)
-		add(self.list, o)
+		self.list[self.len] = o
+		o.id = self.len
+		self.len = self.len + 1
+		o.destroy = function(o_self)
+			self.list[o_self.id] = nil
+		end
 	end
 }
 --constant
@@ -142,16 +148,21 @@ box = {
 				}
 				local from = self:box_pos() + self.box.size * from[self.face]
 				local ps = line_pixels(from, dir[self.face], len[self.face])
-				if block_move(ps, self.face, self.speed) == nil then
+				local p, s = block_move(ps, self.face, self.speed)
+				if p == nil then
 					self.pos = self.pos + face_to_dir[self.face] * self.speed
+				else
+					if self.on_collision ~= nil then
+						self:on_collision(p, s)
+					end
 				end
 			end
 		end
-		o.draw = function(self)
-			last_draw(self)
-			local pos = self:box_pos()
-			rect(pos.x, pos.y, pos.x + self.box.size.x, pos.y + self.box.size.y)
-		end
+		--o.draw = function(self)
+		--	last_draw(self)
+		--	local pos = self:box_pos()
+		--	rect(pos.x, pos.y, pos.x + self.box.size.x, pos.y + self.box.size.y)
+		--end
 	end
 }
 --player
@@ -263,11 +274,10 @@ player = {
 
 		--trigger bullet
 		if btnp(4) then
-			local dir = clone(self:face_dir())
 			local offset = (current_animation.bullet_pos - v.new(3.5, 0)) 
 				* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
 			local pos = self.pos + offset
-			bullet.new(dir, pos)
+			bullet.new(self.face, pos)
 		end
 	end,
 	speed = 1
@@ -284,19 +294,26 @@ do
 	insert_animation_group({"right_walk", "up_walk", "down_walk"})
 end
 --bullet
-bullet = {}
-function bullet.new(dir, pos)
-	local bullet = {}
-	bullet.pos = pos - v.new(1, 1)
-	bullet.dir = dir
-	bullet.speed = 1
-	bullet.update = function(self)
-		self.pos = self.pos + dir * self.speed
+bullet = {
+	speed = 1,
+	move = true,
+	update = function(self)
+		self:box_block_move()
+	end,
+	on_collision = function(self)
+		self:destroy()
 	end
-	s.add_to(bullet)
-	bullet.s.id = 10
-	os:add(bullet)
-	return bullet
+}
+function bullet.new(face, pos)
+	local r = clone(bullet)
+	r.pos = pos - v.new(1, 1)
+	r.face = face
+	s.add_to(r)
+	box.add_to(r)
+	r.s.id = 10
+	r.box.size = v.new(3, 3)
+	os:add(r)
+	return r
 end
 --map
 maps = {
