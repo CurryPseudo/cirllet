@@ -197,29 +197,8 @@ box = {
 		o.box_pos = function(self)
 			return self.pos + self.box.offset
 		end
-		o.check_collision = function(self, offset)
-			if self.collision_list ~= nil then
-				local box_pos = self:box_pos()
-				if offset ~= nil then
-					box_pos = box_pos + offset
-				end
-				local max = box_pos + self.box.size
-				for _, l in pairs(self.collision_list) do
-					for _, o in pairs(l.list)do
-						if o.box ~= nil then
-							local o_box_pos = o:box_pos()
-							local o_max = o_box_pos + o.box.size
-							if box_pos.x < o_max.x and box_pos.y < o_max.y and 
-								o_box_pos.x < max.x and o_box_pos.y < max.y then
-								return o
-							end
-						end
-					end
-				end
-			end
-		end
-		o.box_block_move = function(self)
-			if self.move then
+		o.check_collision = function(self, face, distance)
+			if face ~= nil then
 				local from = {
 					v.new(0, 1),
 					v.new(1, 0),
@@ -239,26 +218,45 @@ box = {
 					self.box.size.x
 				}
 				local box_pos = self:box_pos()
-				local from = box_pos + (self.box.size - v.new(1, 1)) * from[self.face]
-				local ps = line_pixels(from, line_dir[self.face], len[self.face])
-				local p, s = block_move(ps, self.face, self.speed)
+				local from = box_pos + (self.box.size - v.new(1, 1)) * from[face]
+				local ps = line_pixels(from, line_dir[face], len[face])
+				local p, s = block_move(ps, face, distance)
+				if p ~= nil then
+					return p, s
+				end
+			end
+			if self.collision_list ~= nil then
+				local box_pos = self:box_pos()
+				if face ~= nil then
+					box_pos = box_pos + face_to_dir[face] * distance
+				end
+				local max = box_pos + self.box.size
+				for _, l in pairs(self.collision_list) do
+					for _, o in pairs(l.list)do
+						if o.box ~= nil then
+							local o_box_pos = o:box_pos()
+							local o_max = o_box_pos + o.box.size
+							if box_pos.x < o_max.x and box_pos.y < o_max.y and 
+								o_box_pos.x < max.x and o_box_pos.y < max.y then
+								return o
+							end
+						end
+					end
+				end
+			end
+		end
+		o.box_block_move = function(self)
+			if self.move then
+				local p, s = self:check_collision(self.face, self.speed)
 				if p ~= nil then
 					if self.on_collision ~= nil then
 						self:on_collision(p, s)
 					end
-					return
-				end
-				local dir = face_to_dir[self.face]
-				local o = self:check_collision(dir * self.speed)
-				if o ~= nil then
-					if self.on_collision ~= nil then
-						self:on_collision(o)
-					end
-					if o.box.block then
+					if p.box == nil or p.box.block then
 						return
 					end
 				end
-				self.pos = self.pos + dir * self.speed
+				self.pos = self.pos + face_to_dir[self.face] * self.speed
 			end
 		end
 		--o.draw = function(self)
@@ -482,7 +480,7 @@ player = {
 				loop = true
 			},
 			after_parry_down = {
-				series = {19, 18, 17},
+				series = {19, 17, 3},
 				rate = 6,
 			},
 			prepare_parry_up = {
@@ -495,7 +493,7 @@ player = {
 				loop = true
 			},
 			after_parry_up = {
-				series = {23, 22, 21},
+				series = {23, 21, 9},
 				rate = 6,
 			}
 		}
@@ -626,6 +624,11 @@ bullet = {
 		else
 			local o = p
 			if o.other ~= nil then --portal
+				local valid_face = o.other:valid_face(self.face)
+				if valid_face == nil then
+					self:destroy()
+				end
+				self.face = valid_face
 				local target_pos = {
 					v.new(-1, 3.5),
 					v.new(8, 3.5),
@@ -729,6 +732,25 @@ portal = {
 			r.other = portal
 			portal.other = r
 			break
+		end
+		r.valid_face = function(self, face)
+			local next = {
+				3, 4, 2, 1
+			}
+			local current_face = face
+			local first = true
+			while true do
+				if current_face == face and not first then
+					return
+				end
+				first = false
+				local p = self:check_collision(current_face, 1)
+				if p ~= nil then
+					current_face = next[current_face]
+				else
+					return current_face
+				end
+			end
 		end
 		os:add(r)
 		portals:add(r)
@@ -946,9 +968,9 @@ __map__
 0c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0d01000000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0d00000000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0d0000000b000000002124270000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0d00000000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-4d0000001d000000000000000000004d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0d00000000000000002124270000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0d00000c1b000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+4d00000e1d000000000000000000004d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0d00000000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 4d00000000001d00000000000000004d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0d00000000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
