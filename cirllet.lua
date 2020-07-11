@@ -567,7 +567,20 @@ player = {
 		os:add(r)
 		players:add(r)
 	end,
-	on_collision = function(self, p, s)
+	on_collision = function(self, o, s)
+		if o.other ~= nil then --portal
+			local valid_face = o.other:valid_face(self.face)
+			if valid_face ~= nil then
+				self.face = valid_face
+				local target_pos = {
+					v.new(-8, 0),
+					v.new(8, 0),
+					v.new(0, -8),
+					v.new(0, 8),
+				}
+				self.pos = o.other.pos + target_pos[self.face]
+			end
+		end
 		if s ~= nil then
 			if s == 29 then
 				maps:next()
@@ -584,6 +597,9 @@ player = {
 		local offset = (target_pos[self.face] - v.new(3.5, 0)) 
 			* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
 		local pos = self.pos + offset
+		for i = 1, 30 do
+			particle.new(clone(pos), 2, 0.05, 0.5, 0, 5)
+		end
 		bullet.new(self.face, pos)
 	end,
 	on_parry_bullet = function(self)
@@ -687,20 +703,26 @@ bullet = {
 	update = function(self)
 		self:box_block_move()
 	end,
+	hit_destroy = function(self)
+		for i = 1, 20 do
+			particle.new(clone(self.pos), 1, 0.05, 0.5, 7, 7)
+		end
+		self:destroy()
+	end,
 	on_collision = function(self, p, s)
 		if p.box == nil then
 			if fget(s, 1) then
 				local next = {2, 1, 4, 3}
 				self.face = next[self.face]
 			else
-				self:destroy()
+				self:hit_destroy()
 			end
 		else
 			local o = p
 			if o.other ~= nil then --portal
 				local valid_face = o.other:valid_face(self.face)
 				if valid_face == nil then
-					self:destroy()
+					self:hit_destroy()
 				end
 				self.face = valid_face
 				local target_pos = {
@@ -712,10 +734,10 @@ bullet = {
 				self:set_pos(o.other.pos + target_pos[self.face])
 			elseif o.on_parry_bullet ~= nil then
 				o:on_parry_bullet()
-				self:destroy()
+				self:hit_destroy()
 			elseif o.hit_by_bullet ~= nil then
 				o:hit_by_bullet()
-				self:destroy()
+				self:hit_destroy()
 			end
 		end
 	end,
@@ -791,6 +813,30 @@ progress_bar = {
 		return r
 	end
 }
+--particle
+particle = {
+	new = function(pos, rr, rv, vv, c1, c2)
+		local r = {}
+		r.depth = 90
+		r.pos = pos
+		r.v = v.new(- vv/2 + rnd(vv), -vv/2 + rnd(vv))
+		r.r = 0.5 + rnd(rr)
+		r.rv = rv
+		r.c = c1 + flr(rnd(2)) * (c2 - c1)
+		r.update = function(self)
+			self.pos = self.pos + self.v
+			self.r = self.r - self.rv
+			if self.r <= 0 then
+				self:destroy()
+			end
+		end
+		r.draw = function(self)
+			circfill(self.pos.x, self.pos.y, self.r, self.c)
+		end
+		os:add(r)
+		return r
+	end
+}
 --bullet counter
 bullet_counter = {
 	new = function(follow_pos_f, offset, bullet_count_f)
@@ -826,12 +872,21 @@ bullet_counter = {
 		end
 		os:add(r)
 		objects.concat_destroy(r, function(self)
-			printh("fuck")
 			for i = 1, r.last_count do
 				self.bullets[i]:destroy()
 			end
 		end)
 		return r
+	end
+}
+text = {
+	new = function(s, pos)
+		local r = {}
+		r.depth = 100
+		r.draw = function(self)
+			print(s, pos.x, pos.y, 0)
+		end
+		os:add(r)
 	end
 }
 --portal
@@ -988,9 +1043,10 @@ door = {
 --map
 maps = {
 	list = {
-		v.new(0, 0),
+		v.new(48, 0),
 		v.new(16, 0),
 		v.new(32, 0),
+		v.new(48, 0),
 	},
 	dynamic = {
 	},
@@ -1000,10 +1056,14 @@ maps = {
 	end,
 	next = function(self)
 		self.current_index = self.current_index + 1
-		self:init()
+		objects.clear_all()
+		if self.current_index > #self.list then
+			text.new("Thank you for playing", v.new(20, 50))
+		else
+			self:init()
+		end
 	end,
 	init = function(self)
-		objects.clear_all()
 		local current = self:current();
 		self.tile = tile_map.new()
 		local map = {
