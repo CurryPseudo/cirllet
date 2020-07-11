@@ -4,6 +4,33 @@ function swap(a, b)
 	a = b
 	b = t
 end
+function sort (arr, comp)
+  if not comp then
+    comp = function (a, b)
+      return a < b
+    end
+  end
+  local function partition (a, lo, hi)
+      pivot = a[hi]
+      i = lo - 1
+      for j = lo, hi - 1 do
+        if comp(a[j], pivot) then
+          i = i + 1
+          a[i], a[j] = a[j], a[i]
+        end
+      end
+      a[i + 1], a[hi] = a[hi], a[i + 1]
+      return i + 1
+    end
+  local function quicksort (a, lo, hi)
+    if lo < hi then
+      p = partition(a, lo, hi)
+      quicksort(a, lo, p - 1)
+      return quicksort(a, p + 1, hi)
+    end
+  end
+  return quicksort(arr, 1, #arr)
+end
 function dump(value, call_indent)
 
   if not call_indent then 
@@ -309,6 +336,7 @@ animation = {
 parrying_players = objects.new()
 players = objects.new()
 player = {
+	depth = 1,
 	face = 2,
 	faces = {"right", "right", "up", "down"},
 	flip_x = false,
@@ -614,6 +642,7 @@ do
 	end
 end
 bullet = {
+	depth = 2,
 	speed = 1,
 	move = true,
 	update = function(self)
@@ -729,6 +758,7 @@ portal = {
 		}
 		generator.new = function(pos)
 			local r = {}
+			r.depth = 1
 			r.begin_s = begin_s
 			r.pos = pos
 			s.add_to(r)
@@ -790,6 +820,7 @@ door = {
 		}
 		generator.new = function(pos)
 			local r = {}
+			r.depth = 1
 			r.reopen_time = 3
 			r.pos = pos
 			s.add_to(r)
@@ -884,6 +915,7 @@ maps = {
 		self.tile = tile_map.new()
 		local map = {
 			m_pos = current,
+			depth = 0,
 			draw = function(self)
 				map(self.m_pos.x, self.m_pos.y, 0, 0, 16, 16)
 			end
@@ -895,7 +927,9 @@ maps = {
 				local dynamic = maps.dynamic[s]
 				if dynamic ~= nil then
 					local o = dynamic.o.new(v.new(i * 8, j * 8))
-					mset(pos.x, pos.y, 0)
+					if dynamic.not_erase == nil then
+						mset(pos.x, pos.y, 0)
+					end
 					if dynamic.into_tile ~= nil then
 						self.tile[i][j] = o
 					end
@@ -905,7 +939,7 @@ maps = {
 		os:add(map)
 	end
 }
-maps.dynamic[1] = {o = player}
+maps.dynamic[30] = {o = player, not_erase = true}
 
 door_green = door.new(1, 33)
 door_yellow = door.new(1.5, 36)
@@ -925,10 +959,25 @@ end
 
 function _draw()
 	cls(6)
+	local draw_list = {}
 	for _, o in pairs(os.list) do
 		if o.draw ~= nil then
-			o:draw()
+			add(draw_list, o)
 		end
+	end
+	sort(draw_list, function(o1, o2)
+		if o1.depth == nil then
+			return true
+		else
+			if o2.depth == nil then
+				return false
+			else
+				return o1.depth < o2.depth
+			end
+		end
+	end)
+	for _, o in pairs(draw_list) do
+		o:draw()
 	end
 end
 function _update60()
