@@ -459,7 +459,7 @@ player = {
 			},
 			after_parry_down = {
 				series = {19, 18, 17},
-				rate = 4,
+				rate = 6,
 			},
 			prepare_parry_up = {
 				series = {21, 22, 23},
@@ -472,7 +472,7 @@ player = {
 			},
 			after_parry_up = {
 				series = {23, 22, 21},
-				rate = 4,
+				rate = 6,
 			}
 		}
 		r.animation.name = "right"
