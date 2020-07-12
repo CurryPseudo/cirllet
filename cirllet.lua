@@ -207,13 +207,14 @@ os = objects.new()
 frame_rate = 60
 frame_time = 1 / frame_rate
 animation_rate = 0.1
-max_bullet_count = 5
+max_bullet_count = 3
 face_to_dir = {
 	v.new(-1, 0), 
 	v.new(1, 0), 
 	v.new(0, -1), 
 	v.new(0, 1)
 }
+face_revert = {2, 1, 4, 3}
 --collider box
 tile_map = {
 	new = function()
@@ -320,10 +321,10 @@ box = {
 					if self.on_collision ~= nil then
 						self:on_collision(p, s)
 					end
-					if p.box == nil then
+					if p.x ~= nil then
 						self.pos = self.pos + p
 						return
-					elseif p.box.block then
+					elseif p.box and p.box.block then
 						return
 					end
 				end
@@ -431,6 +432,8 @@ player = {
 					self.animation:change("prepare_parry_"..self:up_or_down(), function()
 						self.fsm:change(self, "parry")
 					end)
+					sfx(-2, 0)
+					sfx(4)
 				end,
 				update = function(state, self)
 					self.animation:update(self)
@@ -454,6 +457,7 @@ player = {
 					end, v.new(2, -4), function()
 						return state.parried_bullet
 					end)
+					sfx(3, 0)
 				end,
 				update = function(state, self)
 					self.animation:update(self)
@@ -466,6 +470,7 @@ player = {
 				exit = function(state, self)
 					parrying_players:remove(state.parring_id)
 					state.counter:destroy()
+					sfx(-2, 0)
 				end
 			},
 			after_parry = {
@@ -480,6 +485,7 @@ player = {
 					self.animation:change("after_parry_"..self:up_or_down(), function()
 						state.animation_finish = true
 					end)
+					sfx(5)
 				end,
 				update = function(state, self)
 					self.animation:update(self)
@@ -490,7 +496,7 @@ player = {
 						state.parried_bullet = state.parried_bullet - 1
 						state.bullet_step_time_left = state.bullet_step_time_left + state.bullet_step_time
 					elseif state.animation_finish then 
-						self.reload_time_left = self.reload_time
+						--self.reload_time_left = self.reload_time
 						self.fsm:change(self, "reload")
 					end
 				end
@@ -517,6 +523,7 @@ player = {
 	--player new
 	new = function(pos)
 		local r = clone(player)
+		player.singleton = r
 		s.add_to(r)
 		r.s.id = 1
 		r.pos = pos
@@ -530,32 +537,35 @@ player = {
 				loop = true
 			},
 			right_walk = {
-				series = {1, 2, 3, 2, 1},
-				loop = true
+				series = {65, 66},
+				loop = true,
+				rate = 3
 			},
 			up = {
 				series = {7, 8, 9, 8, 7},
 				loop = true
 			},
 			up_walk = {
-				series = {7, 8, 9, 8, 7},
-				loop = true
+				series = {69, 70},
+				loop = true,
+				rate = 3
 			},
 			down = {
 				series = {4, 5, 6, 5, 4},
 				loop = true
 			},
 			down_walk = {
-				series = {4, 5, 6, 5, 4},
-				loop = true
+				series = {67, 68},
+				loop = true,
+				rate = 3
 			},
 			prepare_parry_down = {
 				series = {17, 18, 19},
-				rate = 2
+				rate = 1
 			},
 			parry_down = {
 				series = {20, 19},
-				rate = 2,
+				rate = 3,
 				loop = true
 			},
 			after_parry_down = {
@@ -564,11 +574,11 @@ player = {
 			},
 			prepare_parry_up = {
 				series = {21, 22, 23},
-				rate = 2
+				rate = 1
 			},
 			parry_up = {
 				series = {24, 23},
-				rate = 2,
+				rate = 3,
 				loop = true
 			},
 			after_parry_up = {
@@ -579,10 +589,13 @@ player = {
 		r.animation.name = "right"
 		os:add(r)
 		players:add(r)
+		objects.concat_destroy(r, function(self)
+			sfx(-2, 0)
+		end)
 	end,
 	on_collision = function(self, o, s)
 		if o.other ~= nil then --portal
-			local valid_face = o.other:valid_face(self.face)
+			local valid_face = o.other:valid_face(self)
 			if valid_face ~= nil then
 				self.face = valid_face
 				local target_pos = {
@@ -591,11 +604,15 @@ player = {
 					v.new(0, -8),
 					v.new(0, 8),
 				}
+				local after_pos = o.other.pos + target_pos[self.face]
+				o:on_transport(self.pos + v.new(3.5, 3.5), after_pos + v.new(3.5, 3.5), self.face)
 				self.pos = o.other.pos + target_pos[self.face]
 			end
 		end
 		if s ~= nil then
 			if s == 29 then
+				sfx(-2, 0)
+				sfx(6)
 				maps:next()
 			end
 		end
@@ -610,9 +627,10 @@ player = {
 		local offset = (target_pos[self.face] - v.new(3.5, 0)) 
 			* v.new(self:flip_x_sign(), 1) + v.new(3.5, 0)
 		local pos = self.pos + offset
-		for i = 1, 30 do
+		for i = 1, 15 do
 			particle.new(clone(pos), 2, 0.05, 0.5, 0, 5)
 		end
+		sfx(0)
 		bullet.new(self.face, pos)
 	end,
 	on_parry_bullet = function(self)
@@ -654,12 +672,19 @@ player = {
 	process_move = function(self)
 		local animation = self.animation
 		local current = animation.current
+		local last_move = self.move
 		self:fetch_face()
 		local next_name = ""
 		if self.move then
 			next_name = self.faces[self.face].."_walk";
+			if not last_move and self.move then
+				sfx(7, 0)
+			end
 		else 
 			next_name = self.faces[self.face];
+			if last_move and not self.move then
+				sfx(-2, 0)
+			end
 		end
 		self.animation:change(next_name)
 
@@ -709,7 +734,7 @@ do
 	end
 end
 bullet = {
-	block_flags = {2},
+	block_flags = {1, 2},
 	depth = 2,
 	speed = 1,
 	move = true,
@@ -717,23 +742,23 @@ bullet = {
 		self:box_block_move()
 	end,
 	hit_destroy = function(self)
-		for i = 1, 20 do
-			particle.new(clone(self.pos), 1, 0.05, 0.5, 7, 7)
+		for i = 1, 10 do
+			particle.new(self.pos + v.new(1, 1), 1, 0.05, 0.5, 7, 7, face_revert[self.face])
 		end
+		sfx(1)
 		self:destroy()
 	end,
 	on_collision = function(self, p, s)
 		if p.box == nil then
 			if fget(s, 1) then
-				local next = {2, 1, 4, 3}
-				self.face = next[self.face]
+				self.face = face_revert[self.face]
 			else
 				self:hit_destroy()
 			end
 		else
 			local o = p
 			if o.other ~= nil then --portal
-				local valid_face = o.other:valid_face(self.face)
+				local valid_face = o.other:valid_face(self)
 				if valid_face == nil then
 					self:hit_destroy()
 				end
@@ -744,7 +769,9 @@ bullet = {
 					v.new(3.5, -1),
 					v.new(3.5, 8),
 				}
-				self:set_pos(o.other.pos + target_pos[self.face])
+				local after_pos = o.other.pos + target_pos[self.face]
+				o:on_transport(self.pos + v.new(1, 1), after_pos, self.face)
+				self:set_pos(after_pos)
 			elseif o.on_parry_bullet ~= nil then
 				o:on_parry_bullet()
 				self:hit_destroy()
@@ -773,17 +800,23 @@ bullet = {
 }
 --block move
 function block_move(p, face, len, block_flags)
+	local test_flag = function(s)
+		if block_flags ~= nil then
+			for _, f in pairs(block_flags) do
+				if fget(s, f) then
+					return true
+				end
+			end
+		end
+		return false
+	end
 	for i = 1, len do
 		local target_p = p + face_to_dir[face] * len
 		target_p = target_p / 8
 		local map_p = target_p + maps:current()
 		local s = mget(map_p.x, map_p.y) 
-		if block_flags ~= nil then
-			for _, f in pairs(block_flags) do
-				if fget(s, f) then
-					return target_p, s
-				end
-			end
+		if test_flag(s) then
+			return target_p, s
 		end
 		local o = maps.tile.get_tile(target_p)
 		if o ~= nil then
@@ -825,11 +858,21 @@ progress_bar = {
 }
 --particle
 particle = {
-	new = function(pos, rr, rv, vv, c1, c2)
+	new = function(pos, rr, rv, vv, c1, c2, face)
 		local r = {}
 		r.depth = 90
 		r.pos = pos
-		r.v = v.new(- vv/2 + rnd(vv), -vv/2 + rnd(vv))
+		if face ~= nil then
+			local vs = {
+				v.new(-rnd(vv / 2), -vv/2 + rnd(vv)),
+				v.new(rnd(vv / 2), -vv/2 + rnd(vv)),
+				v.new(-vv/2 + rnd(vv), -rnd(vv / 2)),
+				v.new(-vv/2 + rnd(vv), rnd(vv / 2)),
+			}
+			r.v = vs[face]
+		else
+			r.v = v.new(- vv/2 + rnd(vv), -vv/2 + rnd(vv))
+		end
 		r.r = 0.5 + rnd(rr)
 		r.rv = rv
 		r.c = c1 + flr(rnd(2)) * (c2 - c1)
@@ -902,7 +945,7 @@ text = {
 --portal
 portals = objects.new()
 portal = {
-	new = function(begin_s)
+	new = function(begin_s, c1, c2)
 		local generator = {}
 		maps.dynamic[begin_s] = {
 			o = generator,
@@ -910,6 +953,8 @@ portal = {
 		}
 		generator.new = function(pos)
 			local r = {}
+			r.c1 = c1
+			r.c2 = c2
 			r.depth = 1
 			r.begin_s = begin_s
 			r.pos = pos
@@ -935,10 +980,12 @@ portal = {
 					break
 				end
 			end
-			r.valid_face = function(self, face)
+			r.valid_face = function(self, o)
+				self.block_flags = o.block_flags
 				local next = {
 					3, 4, 2, 1
 				}
+				local face = o.face
 				local current_face = face
 				local first = true
 				while true do
@@ -954,6 +1001,15 @@ portal = {
 					end
 				end
 			end
+			r.on_transport = function(self, pos, after_pos, face)
+				for i = 0, 5 do
+					particle.new(pos, 2, 0.1, 0.5, self.c1, self.c2, face_revert[face])
+				end
+				for i = 0, 5 do
+					particle.new(after_pos, 2, 0.1, 0.5, self.c1, self.c2, face)
+				end
+				sfx(2)
+			end
 			os:add(r)
 			portals:add(r)
 			return r
@@ -964,7 +1020,7 @@ portal = {
 --door
 doors = objects.new()
 door = {
-	new = function(strength, begin_s)
+	new = function(strength, begin_s, reopen_time)
 		local generator = {}
 		maps.dynamic[begin_s] = {
 			o = generator,
@@ -973,7 +1029,7 @@ door = {
 		generator.new = function(pos)
 			local r = {}
 			r.depth = 1
-			r.reopen_time = 2
+			r.reopen_time = reopen_time
 			r.pos = pos
 			s.add_to(r)
 			r.s.id = begin_s
@@ -1007,6 +1063,7 @@ door = {
 						maps.tile.set(self.pos, nil)
 						self.animation:change("opened")
 						r.reopen_time_left = r.reopen_time
+						sfx(8)
 					end
 				elseif self.enable_animation then
 					self.animation:update(self)
@@ -1029,6 +1086,7 @@ door = {
 							end)
 							self.reopen_time_left = nil
 							self.strength_left = strength
+							sfx(9)
 						end
 					end
 				end
@@ -1050,13 +1108,45 @@ door = {
 		return generator
 	end,
 }
+--shield
+shield = {
+	new = function(pos)
+		local r = {}
+		r.depth = 0.5
+		r.pos = pos
+		s.add_to(r)
+		r.animation = animation.new()
+		r.animation.data = {
+			idle = {
+				series = {45, 46, 47},
+				loop = true
+			}
+		}
+		r.animation.name = "idle"
+		r.update = function(self)
+			self.animation:update(self)
+			local player_pos = player.singleton.pos
+			if player_pos.y < self.pos.y then
+				self.depth = 1.5
+			else
+				self.depth = 0.5
+			end
+		end
+		r.hit_by_bullet = function(self)
+		end
+		os:add(r)
+		return r
+	end
+}
 --map
 maps = {
 	list = {
-		v.new(48, 0),
+		v.new(0, 0),
 		v.new(16, 0),
 		v.new(32, 0),
 		v.new(48, 0),
+		v.new(64, 0),
+		v.new(80, 0),
 	},
 	dynamic = {
 	},
@@ -1103,13 +1193,14 @@ maps = {
 	end
 }
 maps.dynamic[30] = {o = player, not_erase = true}
+maps.dynamic[45] = {o = shield, not_erase = true}
 
-door_green = door.new(1, 33)
-door_yellow = door.new(1.5, 36)
-door_red = door.new(2, 39)
-portal_blue = portal.new(49)
-portal_yellow = portal.new(53)
-portal_red = portal.new(57)
+door_green = door.new(1, 33, 1.5)
+door_yellow = door.new(1.5, 36, 3)
+door_red = door.new(2, 39, 4.5)
+portal_blue = portal.new(49, 1, 12)
+portal_yellow = portal.new(53, 9, 10)
+portal_red = portal.new(57, 2, 8)
 --accurate btnp
 last_btn_cache = {false, false, false, false, false, false}
 current_btn_cache = {false, false, false, false, false, false}
